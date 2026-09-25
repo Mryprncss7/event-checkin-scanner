@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event Check-In</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin:0; padding:16px; background:#111; color:#fff; }
+    h2 { margin-bottom: 4px; }
+    #reader { width: 100%; max-width: 420px; margin: 12px auto 0; border-radius:12px; overflow:hidden; }
+    #result { margin-top: 20px; padding: 16px; border-radius: 12px; font-size: 20px; min-height: 60px; transition: background .2s; }
+    .ok  { background:#1b5e20; }
+    .dup { background:#8d6e00; }
+    .err { background:#b71c1c; }
+    .idle{ background:#222; color:#999; }
+  </style>
+</head>
+<body>
+  <h2>Event Check-In</h2>
+  <div id="reader"></div>
+  <div id="result" class="idle">Point camera at a guest's QR code</div>
+
+  <script>
+    // ⬇️ Paste YOUR Apps Script web app URL here (ends in /exec)
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwM1TUKc_xN4DGC4hir8hg2ZicNLoT-9RlD8yYxvAKZuAWDameP1kOWQLOIPLmdM-HoEg/exec";
+
+    const resultDiv = document.getElementById('result');
+    let scanning = true;
+
+    function setIdle() {
+      scanning = true;
+      resultDiv.className = 'idle';
+      resultDiv.textContent = "Point camera at a guest's QR code";
+    }
+
+    function onScanSuccess(decodedText) {
+      if (!scanning) return;
+      scanning = false;
+      resultDiv.className = 'idle';
+      resultDiv.textContent = 'Checking...';
+
+      fetch(APPS_SCRIPT_URL + '?code=' + encodeURIComponent(decodedText))
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            resultDiv.className = 'ok';
+            resultDiv.textContent = '✓ Welcome, ' + res.name + '!';
+          } else if (res.alreadyCheckedIn) {
+            resultDiv.className = 'dup';
+            resultDiv.textContent = '⚠ ' + res.name + ' already checked in at ' + res.time;
+          } else if (res.notFound) {
+            resultDiv.className = 'err';
+            resultDiv.textContent = '✗ QR code not recognized';
+          } else {
+            resultDiv.className = 'err';
+            resultDiv.textContent = '✗ ' + (res.error || 'Error checking in');
+          }
+          setTimeout(setIdle, 2500);
+        })
+        .catch(err => {
+          resultDiv.className = 'err';
+          resultDiv.textContent = '✗ Network error: ' + err;
+          setTimeout(setIdle, 2500);
+        });
+    }
+
+    const html5QrCode = new Html5Qrcode("reader");
+    html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: 250 },
+      onScanSuccess
+    ).catch(function(err) {
+      resultDiv.className = 'err';
+      resultDiv.textContent = 'Camera error: ' + err;
+    });
+  </script>
+</body>
+</html>
