@@ -9,11 +9,19 @@
     body { font-family: Arial, sans-serif; text-align: center; margin:0; padding:16px; background:#111; color:#fff; }
     h2 { margin-bottom: 4px; }
     #reader { width: 100%; max-width: 420px; margin: 12px auto 0; border-radius:12px; overflow:hidden; }
-    #result { margin-top: 20px; padding: 16px; border-radius: 12px; font-size: 20px; min-height: 60px; transition: background .2s; }
+    #result { margin: 20px auto 0; max-width: 420px; padding: 16px; border-radius: 12px; font-size: 20px; min-height: 60px; transition: background .2s; }
     .ok  { background:#1b5e20; }
     .dup { background:#8d6e00; }
     .err { background:#b71c1c; }
     .idle{ background:#222; color:#999; }
+    #contactPanel { display:none; margin: 12px auto 0; max-width: 420px; padding: 16px; border-radius: 12px; background:#1e1e1e; text-align:left; }
+    #contactPanel p { margin: 0 0 10px; font-size: 16px; }
+    #contactInput { width: 100%; box-sizing: border-box; padding: 12px; font-size: 18px; border-radius: 8px; border: 1px solid #555; background:#111; color:#fff; margin-bottom: 10px; }
+    .btn { width: 100%; padding: 14px; font-size: 17px; border: 0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; color:#fff; }
+    #confirmBtn { background:#1b5e20; }
+    #saveBtn { background:#1565c0; }
+    #skipBtn { background:#333; }
+    #panelMsg { color:#ff8a80; font-size: 15px; min-height: 18px; }
   </style>
 </head>
 <body>
@@ -21,27 +29,76 @@
   <div id="reader"></div>
   <div id="result" class="idle">Point camera at a guest's QR code</div>
 
+  <div id="contactPanel">
+    <p id="onFile"></p>
+    <button id="confirmBtn" class="btn">Number is correct</button>
+    <input id="contactInput" type="tel" inputmode="tel" placeholder="Type new contact number">
+    <button id="saveBtn" class="btn">Save new number</button>
+    <button id="skipBtn" class="btn">Skip</button>
+    <div id="panelMsg"></div>
+  </div>
+
   <script>
-    // ⬇️ Paste YOUR Apps Script web app URL here (ends in /exec)
+    // Paste YOUR Apps Script web app URL here (ends in /exec)
     const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwM1TUKc_xN4DGC4hir8hg2ZicNLoT-9RlD8yYxvAKZuAWDameP1kOWQLOIPLmdM-HoEg/exec";
 
     const resultDiv = document.getElementById('result');
+    const panel = document.getElementById('contactPanel');
+    const onFile = document.getElementById('onFile');
+    const input = document.getElementById('contactInput');
+    const confirmBtn = document.getElementById('confirmBtn');
+    const panelMsg = document.getElementById('panelMsg');
+
     let scanning = true;
+    let currentCode = null;
+
+    function api(params) {
+      const q = Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
+      return fetch(APPS_SCRIPT_URL + '?' + q).then(r => r.json());
+    }
 
     function setIdle() {
       scanning = true;
+      currentCode = null;
+      panel.style.display = 'none';
+      panelMsg.textContent = '';
+      input.value = '';
       resultDiv.className = 'idle';
       resultDiv.textContent = "Point camera at a guest's QR code";
+    }
+
+    function showPanel(res) {
+      panelMsg.textContent = '';
+      input.value = '';
+      if (res.contactMasked) {
+        onFile.textContent = 'Number on file: ' + res.contactMasked + ' — ask the guest to confirm.';
+        confirmBtn.style.display = 'block';
+      } else {
+        onFile.textContent = 'No number on file — please ask for their contact number.';
+        confirmBtn.style.display = 'none';
+      }
+      panel.style.display = 'block';
+    }
+
+    function finishContact(res) {
+      if (res.success) {
+        panel.style.display = 'none';
+        resultDiv.className = 'ok';
+        resultDiv.textContent = '✓ Contact saved';
+        setTimeout(setIdle, 1500);
+      } else {
+        panelMsg.textContent = res.error || 'Could not save';
+      }
     }
 
     function onScanSuccess(decodedText) {
       if (!scanning) return;
       scanning = false;
+      currentCode = decodedText;
       resultDiv.className = 'idle';
       resultDiv.textContent = 'Checking...';
 
-      fetch(APPS_SCRIPT_URL + '?code=' + encodeURIComponent(decodedText))
-        .then(r => r.json())
+      api({ code: decodedText })
         .then(res => {
           if (res.success) {
             resultDiv.className = 'ok';
@@ -52,11 +109,21 @@
           } else if (res.notFound) {
             resultDiv.className = 'err';
             resultDiv.textContent = '✗ QR code not recognized';
+            setTimeout(setIdle, 2500);
+            return;
           } else {
             resultDiv.className = 'err';
             resultDiv.textContent = '✗ ' + (res.error || 'Error checking in');
+            setTimeout(setIdle, 2500);
+            return;
           }
-          setTimeout(setIdle, 2500);
+
+          // Guest found: ask staff to confirm the contact number if not done yet
+          if (!res.contactConfirmed) {
+            showPanel(res);
+          } else {
+            setTimeout(setIdle, 2500);
+          }
         })
         .catch(err => {
           resultDiv.className = 'err';
@@ -64,6 +131,20 @@
           setTimeout(setIdle, 2500);
         });
     }
+
+    confirmBtn.addEventListener('click', () => {
+      api({ action: 'contact', code: currentCode, confirm: '1' }).then(finishContact)
+        .catch(err => { panelMsg.textContent = 'Network error: ' + err; });
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', () => {
+      const number = input.value.trim();
+      if (!number) { panelMsg.textContent = 'Type a number first'; return; }
+      api({ action: 'contact', code: currentCode, contact: number }).then(finishContact)
+        .catch(err => { panelMsg.textContent = 'Network error: ' + err; });
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', setIdle);
 
     const html5QrCode = new Html5Qrcode("reader");
     html5QrCode.start(
